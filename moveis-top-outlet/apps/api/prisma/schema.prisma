@@ -1,0 +1,334 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  role          Role           @default(USER)
+  active        Boolean        @default(true)
+  totpSecret    String?        @map("totp_secret")
+  totpEnabled   Boolean        @default(false) @map("totp_enabled")
+  failedLogins  Int            @default(0) @map("failed_logins")
+  lockedUntil   DateTime?      @map("locked_until")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  entity    String?
+  entityId  String?  @map("entity_id")
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([action])
+  @@map("audit_log")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+enum ProductType {
+  PRONTA_ENTREGA
+  ENCOMENDA
+}
+
+enum MediaKind {
+  FOTO
+  CATALOGO
+}
+
+model Category {
+  id        String     @id @default(uuid())
+  name      String
+  parentId  String?    @map("parent_id")
+  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  Category[] @relation("CategoryTree")
+  sortOrder Int        @default(0) @map("sort_order")
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at")
+  products  Product[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Supplier {
+  id        String    @id @default(uuid())
+  name      String
+  document  String?
+  phone     String?
+  email     String?
+  notes     String?
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  products  Product[]
+
+  @@index([name])
+  @@map("suppliers")
+}
+
+model Product {
+  id                String             @id @default(uuid())
+  sku               String             @unique
+  name              String
+  description       String?
+  categoryId        String?            @map("category_id")
+  category          Category?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  supplierId        String?            @map("supplier_id")
+  supplier          Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  type              ProductType
+  costPrice         Decimal            @map("cost_price") @db.Decimal(12, 2)
+  salePrice         Decimal            @map("sale_price") @db.Decimal(12, 2)
+  stockQty          Int                @default(0) @map("stock_qty")
+  unit              String             @default("un")
+  dimensions        String?
+  notes             String?
+  lowStockThreshold Int?               @map("low_stock_threshold")
+  catalogUrl        String?            @map("catalog_url")
+  isKit             Boolean            @default(false) @map("is_kit")
+  kitCostOverride   Decimal?           @map("kit_cost_override") @db.Decimal(12, 2)
+  active            Boolean            @default(true)
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  variations        ProductVariation[]
+  media             ProductMedia[]
+  kitItems          KitItem[]          @relation("KitOwner")
+  usedInKits        KitItem[]          @relation("KitComponent")
+
+  @@index([name])
+  @@index([categoryId])
+  @@index([supplierId])
+  @@map("products")
+}
+
+model ProductVariation {
+  id        String    @id @default(uuid())
+  productId String    @map("product_id")
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku       String    @unique
+  kind      String
+  value     String
+  costPrice Decimal?  @map("cost_price") @db.Decimal(12, 2)
+  salePrice Decimal?  @map("sale_price") @db.Decimal(12, 2)
+  stockQty  Int?      @map("stock_qty")
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  kitItems  KitItem[]
+
+  @@index([productId])
+  @@map("product_variations")
+}
+
+model KitItem {
+  id          String            @id @default(uuid())
+  kitId       String            @map("kit_id")
+  kit         Product           @relation("KitOwner", fields: [kitId], references: [id], onDelete: Cascade)
+  componentId String            @map("component_id")
+  component   Product           @relation("KitComponent", fields: [componentId], references: [id], onDelete: Restrict)
+  variationId String?           @map("variation_id")
+  variation   ProductVariation? @relation(fields: [variationId], references: [id], onDelete: Restrict)
+  quantity    Int               @default(1)
+
+  @@index([kitId])
+  @@map("kit_items")
+}
+
+model ProductMedia {
+  id          String    @id @default(uuid())
+  productId   String    @map("product_id")
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  key         String
+  kind        MediaKind
+  contentType String    @map("content_type")
+  position    Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@map("product_media")
+}
+
+enum PersonType {
+  FISICA
+  JURIDICA
+}
+
+enum PriceList {
+  PADRAO
+  BLOQUEADO
+}
+
+model Customer {
+  id              String            @id @default(uuid())
+  personType      PersonType        @default(FISICA) @map("person_type")
+  priceList       PriceList         @default(PADRAO) @map("price_list")
+  name            String
+  nickname        String?
+  document        String            @unique // CPF/CNPJ normalizado (somente dígitos)
+  rg              String?
+  rgIssuer        String?           @map("rg_issuer")
+  rgUf            String?           @map("rg_uf")
+  gender          String? // M | F
+  birthDate       DateTime?         @map("birth_date")
+  phone           String?
+  mobile          String?
+  email           String?
+  website         String?
+  notes           String?
+  creditLimit     Decimal?          @map("credit_limit") @db.Decimal(12, 2)
+  nfeEmail        String?           @map("nfe_email")
+  issWithheld     Boolean           @default(false) @map("iss_withheld")
+  consumerFinal   Boolean           @default(false) @map("consumer_final")
+  ruralProducer   Boolean           @default(false) @map("rural_producer")
+  archived        Boolean           @default(false) // arquivado (exclusão suave do usuário comum)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  addresses       CustomerAddress[]
+  contacts        CustomerContact[]
+  bankData        CustomerBankData[]
+  documents       CustomerDocument[]
+
+  @@index([name])
+  @@index([phone])
+  @@index([mobile])
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id             String   @id @default(uuid())
+  customerId     String   @map("customer_id")
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  zipCode        String?  @map("zip_code") // CEP (somente dígitos); vazio no exterior
+  street         String
+  number         String?
+  complement     String?
+  district       String? // bairro
+  city           String?
+  state          String? // UF
+  isForeign      Boolean  @default(false) @map("is_foreign") // endereço no exterior (texto livre em "street")
+  isMain         Boolean  @default(false) @map("is_main")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+model CustomerContact {
+  id         String   @id @default(uuid())
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name       String
+  phone      String?
+  email      String?
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+model CustomerBankData {
+  id          String   @id @default(uuid())
+  customerId  String   @map("customer_id")
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  bankName    String   @map("bank_name")
+  agency      String?
+  account     String?
+  accountType String?  @map("account_type")
+  pixKey      String?  @map("pix_key")
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_bank_data")
+}
+
+model CustomerDocument {
+  id          String   @id @default(uuid())
+  customerId  String   @map("customer_id")
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  key         String // chave no armazenamento de objetos (S3/R2)
+  fileName    String   @map("file_name")
+  contentType String   @map("content_type")
+  size        Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_documents")
+}
+
+model DataImport {
+  id         String          @id @default(uuid())
+  kind       String
+  fileName   String          @map("file_name")
+  userId     String          @map("user_id")
+  status     String          @default("PREVIEW")
+  mode       String?
+  totals     Json?
+  created    Json?
+  createdAt  DateTime        @default(now()) @map("created_at")
+  appliedAt  DateTime?       @map("applied_at")
+  undoneAt   DateTime?       @map("undone_at")
+  rows       DataImportRow[]
+
+  @@index([kind, createdAt])
+  @@map("imports")
+}
+
+model DataImportRow {
+  id         String     @id @default(uuid())
+  importId   String     @map("import_id")
+  dataImport DataImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  line       Int
+  status     String
+  messages   Json
+  data       Json?
+  raw        Json
+  action     String?
+  entity     String?
+  entityId   String?    @map("entity_id")
+  previous   Json?
+
+  @@index([importId, line])
+  @@map("import_rows")
+}
